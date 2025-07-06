@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>家計簿カレンダー（PDF強化・詳細表示）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: Arial, sans-serif; background:#f0f5f9; padding:20px; }
+  #calendar table { width: 100%; border-collapse: collapse; }
+  #calendar th, #calendar td {
+    border: 1px solid #ccc; vertical-align: top; padding: 6px; height: 100px;
+    cursor: pointer;
+    position: relative;
+    font-size: 14px;
+    white-space: normal;
+    overflow-y: auto;
+  }
+  #calendar td:hover { background: #e3f2fd; }
+  .date-num { font-weight: bold; margin-bottom: 4px; }
+  .money-income {
+    color: #2e7d32;
+    font-weight: normal;
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  .money-expense {
+    color: #c62828;
+    font-weight: normal;
+    font-size: 12px;
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <h1>ログイン</h1>
+  <input id="username" placeholder="ユーザー名" />
+  <input id="password" type="password" placeholder="パスワード" />
+  <button onclick="login()">ログイン</button>
+  <p id="loginMessage" style="color:red;"></p>
+</div>
+
+<div id="mainApp" style="display:none;">
+  <h1>家計簿カレンダー</h1>
+  <button onclick="changeMonth(-1)">← 前の月</button>
+  <span id="monthYear" style="font-weight:bold; margin: 0 15px;"></span>
+  <button onclick="changeMonth(1)">次の月 →</button>
+
+  <div id="calendar"></div>
+
+  <h2>家計簿記録フォーム</h2>
+  <input type="date" id="date" />
+  <select id="type"><option>支出</option><option>収入</option></select>
+  <select id="category">
+    <option>食費</option><option>交通費</option><option>日用品</option><option>娯楽</option><option>給料</option><option>その他</option>
+  </select>
+  <input type="number" id="amount" placeholder="金額" />
+  <input type="text" id="note" placeholder="メモ" />
+  <button onclick="addRecord()">追加</button>
+
+  <h3>PDFファイルから家計簿を読み込む</h3>
+  <input type="file" accept="application/pdf" onchange="importPDF(event)" />
+  <p id="pdfStatus" style="color:green;"></p>
+  <p id="pdfErrorStatus" style="color:red;"></p>
+  <button id="downloadErrorCSVBtn" style="display:none;" onclick="downloadErrorCSV()">PDFエラーCSVダウンロード</button>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.10.100/pdf.min.js"></script>
+<script>
+  const USERNAME = "kuninaka";
+  const PASSWORD = "0000";
+
+  let currentDate = new Date();
+  let records = JSON.parse(localStorage.getItem("kakeiboRecords") || "[]");
+  const pdfImportErrors = [];
+
+  function login() {
+    const u = document.getElementById("username").value;
+    const p = document.getElementById("password").value;
+    if (u === USERNAME && p === PASSWORD) {
+      document.getElementById("loginScreen").style.display = "none";
+      document.getElementById("mainApp").style.display = "block";
+      renderCalendar();
+    } else {
+      document.getElementById("loginMessage").textContent = "ユーザー名またはパスワードが違います";
+    }
+  }
+
+  function changeMonth(delta) {
+    currentDate.setMonth(currentDate.getMonth() + delta);
+    renderCalendar();
+  }
+
+  // ここが修正済みカレンダー描画関数
+  function renderCalendar() {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    document.getElementById("monthYear").textContent = `${year}年${month + 1}月`;
+
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    let html = "<table><tr><th>日</th><th>月</th><th>火</th><th>水</th><th>木</th><th>金</th><th>土</th></tr><tr>";
+
+    let day = 1;
+    for (let i = 0; i < 42; i++) {
+      if (i < firstDay || day > daysInMonth) {
+        html += "<td></td>";
+      } else {
+        const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const dayRecords = records.filter(r => r.date === dateKey);
+
+        html += `<td onclick="selectDate('${dateKey}')" style="white-space:normal;">`;
+        html += `<div class="date-num">${day}</div>`;
+
+        dayRecords.forEach(r => {
+          const cls = r.type === "収入" ? "money-income" : "money-expense";
+          const sign = r.type === "収入" ? "＋" : "－";
+          const amountStr = `${sign}¥${r.amount.toLocaleString()}`;
+          html += `<div class="${cls}" style="font-size:12px; margin-top:2px;">${r.type} ${r.category} ${amountStr} ${r.note}</div>`;
+        });
+
+        html += "</td>";
+        day++;
+      }
+      if ((i + 1) % 7 === 0) html += "</tr><tr>";
+    }
+    html += "</tr></table>";
+    document.getElementById("calendar").innerHTML = html;
+  }
+
+  function selectDate(dateStr) {
+    const amountStr = prompt(`${dateStr} の金額を入力してください（キャンセルで中止）`);
+    if (amountStr === null) return;
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount)) {
+      alert("数字を正しく入力してください");
+      return;
+    }
+    const type = prompt("タイプを入力してください（収入 または 支出）", "支出");
+    if (type !== "収入" && type !== "支出") {
+      alert("収入 または 支出 を入力してください");
+      return;
+    }
+    const category = prompt("カテゴリを入力してください", "その他") || "その他";
+    const note = prompt("メモ（任意）") || "";
+    records.push({ date: dateStr, type, category, amount, note });
+    localStorage.setItem("kakeiboRecords", JSON.stringify(records));
+    renderCalendar();
+  }
+
+  function addRecord() {
+    const date = document.getElementById("date").value;
+    const type = document.getElementById("type").value;
+    const category = document.getElementById("category").value;
+    const amount = parseFloat(document.getElementById("amount").value);
+    const note = document.getElementById("note").value;
+    if (!date || isNaN(amount)) {
+      alert("日付と金額は必須です");
+      return;
+    }
+    records.push({ date, type, category, amount, note });
+    localStorage.setItem("kakeiboRecords", JSON.stringify(records));
+    renderCalendar();
+  }
+
+  function logPdfError(code, message) {
+    pdfImportErrors.push({ code, message, timestamp: new Date().toISOString() });
+    document.getElementById("pdfErrorStatus").textContent = `エラー発生: [${code}] ${message}`;
+    document.getElementById("downloadErrorCSVBtn").style.display = "block";
+  }
+
+  function downloadErrorCSV() {
+    if (pdfImportErrors.length === 0) {
+      alert("エラー記録がありません。");
+      return;
+    }
+    let csv = "timestamp,error_code,error_message\n";
+    pdfImportErrors.forEach(e => {
+      csv += `"${e.timestamp}","${e.code}","${e.message.replace(/"/g, '""')}"\n`;
+    });
+    const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+    const blob = new Blob([bom, csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "pdf_import_errors.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importPDF(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    document.getElementById("pdfStatus").textContent = "PDF読み込み中...";
+    document.getElementById("pdfErrorStatus").textContent = "";
+    document.getElementById("downloadErrorCSVBtn").style.display = "none";
+    pdfImportErrors.length = 0;
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+
+        let lastX = 0;
+        let pageText = "";
+        textContent.items.forEach(item => {
+          const diff = item.transform[4] - lastX;
+          if (diff > 5) pageText += " ";
+          pageText += item.str;
+          lastX = item.transform[4];
+        });
+
+        fullText += pageText + "\n";
+      }
+
+      document.getElementById("pdfStatus").textContent = "PDFテキスト抽出完了。解析中...";
+
+      const lines = fullText.split(/\r?\n/);
+      let addedCount = 0;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        const candidates = line.split(/\s{2,}/);
+        for (const part of candidates) {
+          const m = part.match(/(\d{4}[-\/]\d{1,2}[-\/]\d{1,2})\s*(収入|支出)?\s*(食費|交通費|日用品|娯楽|給料|その他)?\s*(\d+)\s*(.*)?/);
+          if (m) {
+            const date = m[1].replace(/\//g, "-");
+            const type = m[2] || "支出";
+            const category = m[3] || "その他";
+            const amount = parseFloat(m[4]);
+            const note = m[5] || "";
+            if (!isNaN(amount)) {
+              records.push({ date, type, category, amount, note });
+              addedCount++;
+            } else {
+              logPdfError("E003", `無効な金額: ${m[4]} 行テキスト:${part}`);
+            }
+          } else {
+            logPdfError("E002", `パターンにマッチしないレコード: ${part}`);
+          }
+        }
+      }
+
+      localStorage.setItem("kakeiboRecords", JSON.stringify(records));
+      renderCalendar();
+      document.getElementById("pdfStatus").textContent = `解析完了。${addedCount}件の記録を追加しました。`;
+    } catch (e) {
+      logPdfError("E001", "PDF読み込みまたは解析に失敗しました: " + e.message);
+      document.getElementById("pdfStatus").textContent = "PDFの処理に失敗しました。";
+    }
+  }
+</script>
+
+</body>
+</html>
+
